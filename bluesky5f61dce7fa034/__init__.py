@@ -985,13 +985,16 @@ BASE_KEYWORDS = [
 PROXY_LIST = [
     "http://172.25.101.159:3128",
     "http://172.25.101.159:3129",
+    "http://172.25.101.159:3130",
+    "http://172.25.101.159:3131",
+    "http://172.25.101.159:3132",
     # Add more proxies as needed
 ]
 
 DEFAULT_OLDNESS_SECONDS = 3600
 DEFAULT_MAXIMUM_ITEMS = 20
 DEFAULT_MIN_POST_LENGTH = 10
-DEFAULT_MAX_CONCURRENT_QUERIES = 5
+DEFAULT_MAX_CONCURRENT_QUERIES = 20
 
 async def fetch_posts(session: aiohttp.ClientSession, keyword: str, since: str, proxy: str) -> list:
     url = f"https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q={keyword}&since={since}"
