@@ -1091,9 +1091,8 @@ async def query_single_keyword(keyword: str, since: str, proxy: str, max_items: 
 async def query(parameters: dict) -> AsyncGenerator[Dict[str, Any], None]:
     max_oldness_seconds, maximum_items_to_collect, min_post_length = read_parameters(parameters)
     max_concurrent_queries = parameters.get("max_concurrent_queries", DEFAULT_MAX_CONCURRENT_QUERIES)
-    #Orginal
-    #since = calculate_since(max_oldness_seconds)
-    since = calculate_since(600)
+
+    since = calculate_since(max_oldness_seconds)
     yielded_items = 0
 
     tasks = []
