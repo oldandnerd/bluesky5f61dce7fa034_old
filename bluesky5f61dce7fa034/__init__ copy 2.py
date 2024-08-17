@@ -1,5 +1,4 @@
 import aiohttp
-from collections import defaultdict
 import asyncio
 import random
 import logging
@@ -996,8 +995,6 @@ DEFAULT_OLDNESS_SECONDS = 3600
 DEFAULT_MAXIMUM_ITEMS = 20
 DEFAULT_MIN_POST_LENGTH = 10
 DEFAULT_MAX_CONCURRENT_QUERIES = 20
-# Initialize a dictionary to keep track of seen post IDs with their timestamps
-seen_posts = defaultdict(lambda: datetime.utcnow())
 
 async def fetch_posts(session: aiohttp.ClientSession, keyword: str, since: str, proxy: str) -> list:
     url = f"https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q={keyword}&since={since}"
@@ -1053,36 +1050,19 @@ def read_parameters(parameters):
         min_post_length
     )
 
-async def query_single_keyword(
-    keyword: str, 
-    since: str, 
-    proxy: str, 
-    max_items: int, 
-    min_post_length: int, 
-    seen_posts: Dict[str, datetime], 
-    max_oldness_seconds: int
-) -> List[Item]:
+async def query_single_keyword(keyword: str, since: str, proxy: str, max_items: int, min_post_length: int) -> List[Item]:
     items = []
+    seen_ids = set()  # Set to track unique post IDs
     async with aiohttp.ClientSession() as session:
         posts = await fetch_posts(session, keyword, since, proxy)
-        current_time = datetime.utcnow()
-        
-        # Remove expired post IDs from the dictionary
-        for post_id in list(seen_posts.keys()):
-            if (current_time - seen_posts[post_id]).total_seconds() > max_oldness_seconds:
-                del seen_posts[post_id]
-        
         for post in posts:
             try:
                 if len(items) >= max_items:
                     break
 
-                post_id = post["uri"]
-                
-                # Skip if post ID is already seen and within the valid time window
-                if post_id in seen_posts:
+                if post["uri"] in seen_ids:  # Skip if we've already seen this post
                     continue
-                
+
                 datestr = format_date_string(post['record']["createdAt"])
                 author_handle = post["author"]["handle"]
 
@@ -1105,10 +1085,8 @@ async def query_single_keyword(
                     external_id=ExternalId(post["uri"]),
                     url=Url(url_recomposed),
                 )
-                
-                # Add post ID to seen posts with the current timestamp
-                seen_posts[post_id] = current_time
                 items.append(item_)
+                seen_ids.add(post["uri"])  # Mark this post ID as seen
 
             except Exception as e:
                 logging.exception(f"[Bluesky] Error processing post: {e}")
@@ -1116,7 +1094,6 @@ async def query_single_keyword(
     return items
 
 
-# Adjust the query function to pass the seen_posts dictionary
 async def query(parameters: dict) -> AsyncGenerator[Dict[str, Any], None]:
     max_oldness_seconds, maximum_items_to_collect, min_post_length = read_parameters(parameters)
     max_concurrent_queries = parameters.get("max_concurrent_queries", DEFAULT_MAX_CONCURRENT_QUERIES)
@@ -1128,7 +1105,6 @@ async def query(parameters: dict) -> AsyncGenerator[Dict[str, Any], None]:
     used_keywords = set()  # Track used keywords within the session
 
     all_keywords = SPECIAL_KEYWORDS_LIST + BASE_KEYWORDS
-    seen_posts = defaultdict(lambda: datetime.utcnow())  # Initialize seen_posts dict
 
     for i in range(max_concurrent_queries):
         if yielded_items >= maximum_items_to_collect:
@@ -1151,15 +1127,7 @@ async def query(parameters: dict) -> AsyncGenerator[Dict[str, Any], None]:
                 break
 
         proxy = random.choice(PROXY_LIST)
-        task = query_single_keyword(
-            search_keyword, 
-            since, 
-            proxy, 
-            maximum_items_to_collect, 
-            min_post_length, 
-            seen_posts, 
-            max_oldness_seconds
-        )
+        task = query_single_keyword(search_keyword, since, proxy, maximum_items_to_collect, min_post_length)
         tasks.append(task)
 
     for task in asyncio.as_completed(tasks):
