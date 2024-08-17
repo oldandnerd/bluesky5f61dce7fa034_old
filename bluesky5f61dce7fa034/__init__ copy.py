@@ -1052,16 +1052,12 @@ def read_parameters(parameters):
 
 async def query_single_keyword(keyword: str, since: str, proxy: str, max_items: int, min_post_length: int) -> List[Item]:
     items = []
-    seen_ids = set()  # Set to track unique post IDs
     async with aiohttp.ClientSession() as session:
         posts = await fetch_posts(session, keyword, since, proxy)
         for post in posts:
             try:
                 if len(items) >= max_items:
                     break
-
-                if post["uri"] in seen_ids:  # Skip if we've already seen this post
-                    continue
 
                 datestr = format_date_string(post['record']["createdAt"])
                 author_handle = post["author"]["handle"]
@@ -1086,13 +1082,11 @@ async def query_single_keyword(keyword: str, since: str, proxy: str, max_items: 
                     url=Url(url_recomposed),
                 )
                 items.append(item_)
-                seen_ids.add(post["uri"])  # Mark this post ID as seen
 
             except Exception as e:
                 logging.exception(f"[Bluesky] Error processing post: {e}")
 
     return items
-
 
 async def query(parameters: dict) -> AsyncGenerator[Dict[str, Any], None]:
     max_oldness_seconds, maximum_items_to_collect, min_post_length = read_parameters(parameters)
@@ -1102,29 +1096,16 @@ async def query(parameters: dict) -> AsyncGenerator[Dict[str, Any], None]:
     yielded_items = 0
 
     tasks = []
-    used_keywords = set()  # Track used keywords within the session
-
-    all_keywords = SPECIAL_KEYWORDS_LIST + BASE_KEYWORDS
-
     for i in range(max_concurrent_queries):
         if yielded_items >= maximum_items_to_collect:
             break
 
-        while True:
-            if len(used_keywords) == len(all_keywords):
-                used_keywords.clear()  # Reset the used keywords when all are used
-                logging.info("All keywords used, resetting used_keywords set.")
-
-            if random.random() < 0.33 and SPECIAL_KEYWORDS_LIST:
-                search_keyword = random.choice(SPECIAL_KEYWORDS_LIST)
-            elif random.random() < 0.33 and BASE_KEYWORDS:
-                search_keyword = random.choice(BASE_KEYWORDS)
-            else:
-                search_keyword = parameters.get("keyword", "default")
-            
-            if search_keyword not in used_keywords:
-                used_keywords.add(search_keyword)
-                break
+        if random.random() < 0.33 and SPECIAL_KEYWORDS_LIST:
+            search_keyword = random.choice(SPECIAL_KEYWORDS_LIST)
+        elif random.random() < 0.33 and BASE_KEYWORDS:
+            search_keyword = random.choice(BASE_KEYWORDS)
+        else:
+            search_keyword = parameters.get("keyword", "default")
 
         proxy = random.choice(PROXY_LIST)
         task = query_single_keyword(search_keyword, since, proxy, maximum_items_to_collect, min_post_length)
@@ -1139,7 +1120,6 @@ async def query(parameters: dict) -> AsyncGenerator[Dict[str, Any], None]:
                 break
         if yielded_items >= maximum_items_to_collect:
             break
-
 
 # Example usage:
 # parameters = {
