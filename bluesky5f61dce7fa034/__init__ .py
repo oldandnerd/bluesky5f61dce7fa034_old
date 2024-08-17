@@ -34,7 +34,7 @@ DEFAULT_MIN_POST_LENGTH = 10
 DEFAULT_MAX_CONCURRENT_QUERIES = 20
 
 # Initialize a dictionary to keep track of seen post IDs with their timestamps
-seen_posts = defaultdict(lambda: datetime.now().strftime())
+seen_posts = defaultdict(lambda: datetime.now())  # Store datetime objects, not strings
 
 async def fetch_posts(session: aiohttp.ClientSession, keyword: str, since: str, proxy: str) -> list:
     url = f"https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q={keyword}&since={since}"
@@ -47,7 +47,7 @@ async def fetch_posts(session: aiohttp.ClientSession, keyword: str, since: str, 
             return []
 
 def calculate_since(max_oldness_seconds: int) -> str:
-    since_time = datetime.now().strftime() - timedelta(seconds=max_oldness_seconds)
+    since_time = datetime.utcnow() - timedelta(seconds=max_oldness_seconds)
     return since_time.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 def convert_to_web_url(uri: str, user_handle: str) -> str:
@@ -128,7 +128,7 @@ async def query_single_keyword(
     try:
         async with aiohttp.ClientSession() as session:
             posts = await fetch_posts(session, keyword, since, proxy)
-            current_time = datetime.now().strftime()
+            current_time = datetime.now()
             
             # Remove expired post IDs from the dictionary
             for post_id in list(seen_posts.keys()):
@@ -190,7 +190,7 @@ async def query(parameters: dict) -> AsyncGenerator[Dict[str, Any], None]:
     yielded_items = 0
 
     tasks = []
-    seen_posts = defaultdict(lambda: datetime.now().strftime())  # Initialize seen_posts dict
+    seen_posts = defaultdict(lambda: datetime.now())  # Initialize seen_posts dict with datetime objects
 
     for i in range(max_concurrent_queries):
         if yielded_items >= maximum_items_to_collect:
