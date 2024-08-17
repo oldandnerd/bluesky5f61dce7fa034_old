@@ -983,11 +983,11 @@ BASE_KEYWORDS = [
 
 # Define your list of proxies
 PROXY_LIST = [
-    "http://localhost:3128",
-    "http://localhost:3129",
-    "http://localhost:3130",
-    "http://localhost:3131",
-    "http://localhost:3132",
+    "http://proxy-01:3128",
+    "http://proxy-02:3129",
+    "http://proxy-03:3130",
+    "http://proxy-04:3131",
+    "http://proxy-05:3132",
     # Add more proxies as needed
 ]
 
