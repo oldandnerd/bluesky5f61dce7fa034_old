@@ -15,7 +15,6 @@ from exorde_data import (
     Url,
     Domain,
 )
-
 logging.basicConfig(level=logging.INFO)
 
 # Constants
@@ -45,6 +44,22 @@ async def fetch_posts(session: aiohttp.ClientSession, keyword: str, since: str, 
         else:
             logging.error(f"Failed to fetch posts for keyword {keyword} using proxy {proxy}: {response.status}")
             return []
+
+async def fetch_keyword(session: aiohttp.ClientSession) -> str:
+    url = "http://keyword_server:8080/get_keyword"
+    async with session.get(url) as response:
+        if response.status == 200:
+            keyword = await response.text()
+            return keyword
+        else:
+            logging.error(f"Failed to fetch keyword: {response.status}")
+            return ""
+
+async def release_keyword(session: aiohttp.ClientSession, keyword: str) -> None:
+    url = "http://keyword_server:8080/release_keyword"
+    async with session.post(url, json={"keyword": keyword}) as response:
+        if response.status != 200:
+            logging.error(f"Failed to release keyword: {response.status}")
 
 def calculate_since(max_oldness_seconds: int) -> str:
     since_time = datetime.utcnow() - timedelta(seconds=max_oldness_seconds)
@@ -90,25 +105,6 @@ def read_parameters(parameters):
         min_post_length
     )
 
-async def get_keyword_from_server() -> str:
-    async with aiohttp.ClientSession() as session:
-        async with session.get('http://keyword_server:8080/get_keyword') as response:
-            if response.status == 200:
-                data = await response.json()
-                return data['keyword']
-            else:
-                logging.error(f"Failed to fetch keyword from server: {response.status}")
-                return None
-
-async def release_keyword_to_server(keyword: str) -> bool:
-    async with aiohttp.ClientSession() as session:
-        async with session.post('http://keyword_server:8080/release_keyword', json={"keyword": keyword}) as response:
-            if response.status == 200:
-                return True
-            else:
-                logging.error(f"Failed to release keyword {keyword} to server: {response.status}")
-                return False
-
 async def query_single_keyword(
     keyword: str, 
     since: str, 
@@ -119,69 +115,60 @@ async def query_single_keyword(
     max_oldness_seconds: int
 ) -> List[Item]:
     items = []
-    
-    # Fetch the keyword from the server
-    keyword = await get_keyword_from_server()
-    if keyword is None:
-        return items  # Return empty if no keyword is fetched
+    async with aiohttp.ClientSession() as session:
+        posts = await fetch_posts(session, keyword, since, proxy)
+        current_time = datetime.utcnow()
+        
+        # Remove expired post IDs from the dictionary
+        for post_id in list(seen_posts.keys()):
+            if (current_time - seen_posts[post_id]).total_seconds() > max_oldness_seconds:
+                del seen_posts[post_id]
+        
+        for post in posts:
+            try:
+                if len(items) >= max_items:
+                    break
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            posts = await fetch_posts(session, keyword, since, proxy)
-            current_time = datetime.now()
-            
-            # Remove expired post IDs from the dictionary
-            for post_id in list(seen_posts.keys()):
-                if (current_time - seen_posts[post_id]).total_seconds() > max_oldness_seconds:
-                    del seen_posts[post_id]
-            
-            for post in posts:
-                try:
-                    if len(items) >= max_items:
-                        break
+                post_id = post["uri"]
+                
+                # Skip if post ID is already seen and within the valid time window
+                if post_id in seen_posts:
+                    continue
+                
+                datestr = format_date_string(post['record']["createdAt"])
+                author_handle = post["author"]["handle"]
 
-                    post_id = post["uri"]
-                    
-                    # Skip if post ID is already seen and within the valid time window
-                    if post_id in seen_posts:
-                        continue
-                    
-                    datestr = format_date_string(post['record']["createdAt"])
-                    author_handle = post["author"]["handle"]
+                sha1 = hashlib.sha1()
+                sha1.update(author_handle.encode())
+                author_sha1_hex = sha1.hexdigest()
 
-                    sha1 = hashlib.sha1()
-                    sha1.update(author_handle.encode())
-                    author_sha1_hex = sha1.hexdigest()
+                url_recomposed = convert_to_web_url(post["uri"], author_handle)
+                full_content = post["record"]["text"] + " " + " ".join(
+                    image.get("alt", "") for image in post.get("record", {}).get("embed", {}).get("images", [])
+                )
 
-                    url_recomposed = convert_to_web_url(post["uri"], author_handle)
-                    full_content = post["record"]["text"] + " " + " ".join(
-                        image.get("alt", "") for image in post.get("record", {}).get("embed", {}).get("images", [])
-                    )
+                logging.info(f"[Bluesky] Found post: url: %s, date: %s, content: %s", url_recomposed, datestr, full_content)
 
-                    logging.info(f"[Bluesky] Found post: url: %s, date: %s, content: %s", url_recomposed, datestr, full_content)
+                item_ = Item(
+                    content=Content(str(full_content)),
+                    author=Author(str(author_sha1_hex)),
+                    created_at=CreatedAt(str(datestr)),
+                    domain=Domain("bsky.app"),
+                    external_id=ExternalId(post["uri"]),
+                    url=Url(url_recomposed),
+                )
+                
+                # Add post ID to seen posts with the current timestamp
+                seen_posts[post_id] = current_time
+                items.append(item_)
 
-                    item_ = Item(
-                        content=Content(str(full_content)),
-                        author=Author(str(author_sha1_hex)),
-                        created_at=CreatedAt(str(datestr)),
-                        domain=Domain("bsky.app"),
-                        external_id=ExternalId(post["uri"]),
-                        url=Url(url_recomposed),
-                    )
-                    
-                    # Add post ID to seen posts with the current timestamp
-                    seen_posts[post_id] = current_time
-                    items.append(item_)
+            except Exception as e:
+                logging.exception(f"[Bluesky] Error processing post: {e}")
 
-                except Exception as e:
-                    logging.exception(f"[Bluesky] Error processing post: {e}")
-
-    finally:
-        # Always release the keyword back to the server when done
-        await release_keyword_to_server(keyword)
-    
     return items
 
+
+# Adjust the query function to pass the seen_posts dictionary
 async def query(parameters: dict) -> AsyncGenerator[Dict[str, Any], None]:
     max_oldness_seconds, maximum_items_to_collect, min_post_length = read_parameters(parameters)
     max_concurrent_queries = parameters.get("max_concurrent_queries", DEFAULT_MAX_CONCURRENT_QUERIES)
@@ -190,30 +177,39 @@ async def query(parameters: dict) -> AsyncGenerator[Dict[str, Any], None]:
     yielded_items = 0
 
     tasks = []
-    seen_posts = defaultdict(lambda: datetime.now())  # Initialize seen_posts dict with datetime objects
 
-    for i in range(max_concurrent_queries):
-        if yielded_items >= maximum_items_to_collect:
-            break
+    seen_posts = defaultdict(lambda: datetime.utcnow())  # Initialize seen_posts dict
 
-        proxy = random.choice(PROXY_LIST)
-        task = query_single_keyword(
-            None,  # Keyword will be fetched from the server
-            since, 
-            proxy, 
-            maximum_items_to_collect, 
-            min_post_length, 
-            seen_posts, 
-            max_oldness_seconds
-        )
-        tasks.append(task)
-
-    for task in asyncio.as_completed(tasks):
-        results = await task
-        for item in results:
-            yield item
-            yielded_items += 1
+    async with aiohttp.ClientSession() as session:
+        for i in range(max_concurrent_queries):
             if yielded_items >= maximum_items_to_collect:
                 break
-        if yielded_items >= maximum_items_to_collect:
-            break
+
+            keyword = await fetch_keyword(session)
+            if not keyword:
+                continue
+
+            proxy = random.choice(PROXY_LIST)
+            task = query_single_keyword(
+                keyword, 
+                since, 
+                proxy, 
+                maximum_items_to_collect, 
+                min_post_length, 
+                seen_posts, 
+                max_oldness_seconds
+            )
+            tasks.append((task, keyword))
+
+        for task, keyword in tasks:
+            results = await task
+            for item in results:
+                yield item
+                yielded_items += 1
+                if yielded_items >= maximum_items_to_collect:
+                    break
+            if yielded_items >= maximum_items_to_collect:
+                break
+            
+            # Release the keyword after use
+            await release_keyword(session, keyword)
