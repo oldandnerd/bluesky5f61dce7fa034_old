@@ -34,7 +34,7 @@ DEFAULT_MIN_POST_LENGTH = 10
 DEFAULT_MAX_CONCURRENT_QUERIES = 20
 
 # Initialize a dictionary to keep track of seen post IDs with their timestamps
-seen_posts = defaultdict(lambda: datetime.now())  # Store datetime objects, not strings
+seen_posts = defaultdict(lambda: datetime.utcnow())
 
 async def fetch_posts(session: aiohttp.ClientSession, keyword: str, since: str, proxy: str) -> list:
     url = f"https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q={keyword}&since={since}"
